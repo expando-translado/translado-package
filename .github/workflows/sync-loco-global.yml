@@ -1,0 +1,38 @@
+name: Synchronizace loco-global
+on:
+  push:
+    branches: ['**']
+    tags: ['**']
+  delete:
+concurrency:
+  group: sync-loco-global
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  sync:
+    if: github.repository_owner == 'expando-translado'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - id: dst
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.LOCO_GLOBAL_GIT_APP_ID }}
+          private-key: ${{ secrets.LOCO_GLOBAL_GIT_KEY }}
+          owner: loco-global
+          repositories: ${{ github.event.repository.name }}
+      - name: Synchronizace
+        env:
+          SRC_TOKEN: ${{ github.token }}
+          DST_TOKEN: ${{ steps.dst.outputs.token }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          set -euo pipefail
+          git init -q --bare w
+          git -C w fetch -q --prune "https://x-access-token:${SRC_TOKEN}@github.com/expando-translado/${REPO}.git" '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*'
+          git -C w push -q --force --prune "https://x-access-token:${DST_TOKEN}@github.com/loco-global/${REPO}.git" 'refs/heads/*:refs/heads/*' 'refs/tags/*:refs/tags/*'
+          src=$(git -C w for-each-ref --format='%(objectname) %(refname)' refs/heads refs/tags | sort)
+          dst=$(git -C w ls-remote --heads --tags "https://x-access-token:${DST_TOKEN}@github.com/loco-global/${REPO}.git" | grep -v '\^{}' | awk '{print $1" "$2}' | sort)
+          if [ "$src" != "$dst" ]; then echo "::error::kopie se po pushi liší od zdroje"; exit 1; fi
+          echo "${REPO}: OK, shodné ($(git -C w for-each-ref refs/heads | wc -l) větví, $(git -C w for-each-ref refs/tags | wc -l) tagů)"
